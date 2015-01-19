@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <vector>
+#include "timer.h"
 
 struct Range {
 	uint16_t minX;
@@ -34,7 +35,7 @@ void FloodFill(
 		auto x = xy.x;
 		auto y = xy.y;
 		auto pixel = pImage[y * imageLineStride + x];
-		auto& flag = &pFlags[y * flagsLineStride + x];
+		auto& flag = pFlags[y * flagsLineStride + x];
 		if (!flag && check(pixel)) {
 			flag = 1;
 			q[pos++] = {x - 1, y};
@@ -137,6 +138,9 @@ int main(int argc, char* argv[])
 	};
 	Range filledRange;
 
+	Timer t;
+	t.Start();
+
 //	FloodFill(
 	FloodFill_ScanLine(
 		pSrc, WIDTH,
@@ -146,6 +150,8 @@ int main(int argc, char* argv[])
 		filledRange,
 		[](uint8_t val) -> bool { return val >= 170; }
 	);
+
+	printf("%f\n", t.ElapsedSecond());
 	
 	return 0;
 }
