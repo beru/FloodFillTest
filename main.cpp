@@ -166,13 +166,11 @@ void scanline(
 	do {
 		if (check(pImageLine[x])) {
 			lx = x;
-			break;
+			goto Label_0;
 		}
 	} while (++x <= pr);
-
-	if (lx == -1) {
-		return;
-	}
+	return;
+Label_0:
 	pFlagsLine[lx] = 1;
 	int rx = lx + 1;
 	for (; rx <= pr; ++rx) {
