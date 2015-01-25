@@ -47,6 +47,36 @@ void FloodFill(
 }
 
 template <typename PixelType, typename CheckFunc>
+void scanline(
+	int y,
+	int lx,
+	int rx,
+	uint32_t* q,
+	size_t& pos,
+	CheckFunc check,
+	PixelType* pImageLine
+	)
+{
+	int x = rx;
+	do {
+		// 右端の有効ピクセルを見つけたら登録
+		do {
+			if (check(pImageLine[x])) {
+				q[pos++] = x + y;
+				break;
+			}
+		} while (--x >= lx);
+		// 左に続く有効ピクセルはskip
+		for (; x >= lx; --x) {
+			if (!check(pImageLine[x])) {
+				break;
+			}
+		}
+	} while (x >= lx);
+};
+
+
+template <typename PixelType, typename CheckFunc>
 void FloodFill_ScanLine(
 	const PixelType* pImage, int imageLineStride,
 	uint8_t* pFlags, int flagsLineStride,
@@ -56,7 +86,7 @@ void FloodFill_ScanLine(
 	CheckFunc check
 	)
 {
-	std::vector<uint32_t> q(1024);
+	uint32_t q[256];
 	size_t pos = 0;
 	q[0] = (pt.y << 16) + pt.x;
 	do {
@@ -78,7 +108,7 @@ void FloodFill_ScanLine(
 			}
 			++lx;
 			// right
-			auto rx = px + 1;
+			int rx = px + 1;
 			for (; rx<=limitRange.maxX; ++rx) {
 				if (!check(pImageLine[rx])) {
 					break;
@@ -90,36 +120,100 @@ void FloodFill_ScanLine(
 				pFlagsLine[x] = 1;
 			}
 
-			auto scanline = [&](int y) {
-				int x = rx;
-				do {
-					// 右端の有効ピクセルを見つけたら登録
-					do {
-						if (check(pImageLine[x])) {
-							q[pos++] = x + y;
-							break;
-						}
-					} while (--x >= lx);
-					// 左に続く有効ピクセルはskip
-					for (; x >= lx; --x) {
-						if (!check(pImageLine[x])) {
-							break;
-						}
-					}
-				} while (x >= lx);
-			};
 			// up
 			pImageLine -= imageLineStride;
 			pFlagsLine -= flagsLineStride;
-			scanline((py - 1) << 16);
+			scanline((py - 1) << 16, lx, rx, q, pos, check, pImageLine);
 
 			// down
 			pImageLine += 2 * imageLineStride;
 			pFlagsLine += 2 * flagsLineStride;
-			scanline((py + 1) << 16);
+			scanline((py + 1) << 16, lx, rx, q, pos, check, pImageLine);
 		}
 	}while (pos--);
 }
+
+struct Position {
+	uint16_t left;
+	uint16_t right;
+	uint16_t y;
+};
+struct Record {
+	Position cur;
+	Position parent;
+};
+
+// 指定された左右範囲内とその左右を調査、レコード追加
+template <typename PixelType, typename CheckFunc>
+void scanline(
+	int y,
+	int pl,
+	int pr,
+	int py,
+	bool extendLeft,
+	bool extendRight,
+	Record* q,
+	size_t& pos,
+	const Range& limitRange,
+	CheckFunc check,
+	PixelType* pImageLine,
+	uint8_t* pFlagsLine 
+	)
+{
+	int lx = -1;
+	// middle
+	int x = pl;
+	do {
+		if (check(pImageLine[x])) {
+			lx = x;
+			break;
+		}
+	} while (++x <= pr);
+
+	if (lx == -1) {
+		return;
+	}
+	pFlagsLine[lx] = 1;
+	int rx = lx + 1;
+	for (; rx <= pr; ++rx) {
+		if (check(pImageLine[rx])) {
+			pFlagsLine[rx] = 1;
+		}
+	}
+	--rx;
+
+	// extend left
+	if (extendLeft && lx == pl) {
+		--lx;
+		for (; lx>=limitRange.minX; --lx) {
+			if (!check(pImageLine[lx])) {
+				break;
+			}
+		}
+		++lx;
+		for (int x=lx; x<pl; ++x) {
+			pFlagsLine[x] = 1;
+		}
+	}
+	// extend right
+	if (extendRight && rx == pr) {
+		++rx;
+		for (; rx<=limitRange.maxX; ++rx) {
+			if (!check(pImageLine[rx])) {
+				break;
+			}
+		}
+		--rx;
+		for (int x=pr+1; x<=rx; ++x) {
+			pFlagsLine[x] = 1;
+		}
+	}
+
+	q[pos++] = {
+		{ lx, rx, y, },
+		{ pl, pr, py, },
+	};
+};
 
 template <typename PixelType, typename CheckFunc>
 void FloodFill_ScanLine2(
@@ -131,15 +225,6 @@ void FloodFill_ScanLine2(
 	CheckFunc check
 	)
 {
-	struct Position {
-		uint16_t left;
-		uint16_t right;
-		uint16_t y;
-	};
-	struct Record {
-		Position cur;
-		Position parent;
-	};
 	Record q[64];
 	size_t pos = 0;
 
@@ -150,62 +235,6 @@ void FloodFill_ScanLine2(
 		return;
 	}
 	auto* pFlagsLine = &pFlags[py * flagsLineStride];
-
-	// 指定された左右範囲内とその左右を調査、レコード追加
-	auto scanline = [&](int y, int pl, int pr, int py, bool extendLeft, bool extendRight) {
-		if (y < limitRange.minY || y > limitRange.maxY) {
-			return;
-		}
-		int lx = -1;
-		// middle
-		for (int x=pl; x<=pr; ++x) {
-			if (check(pImageLine[x])) {
-				lx = x;
-				break;
-			}
-		}
-		if (lx == -1) {
-			return;
-		}
-		pFlagsLine[lx] = 1;
-		int rx = lx + 1;
-		for (; rx <= pr; ++rx) {
-			if (check(pImageLine[rx])) {
-				pFlagsLine[rx] = 1;
-			}
-		}
-		--rx;
-
-		// extend left
-		if (extendLeft && lx == pl) {
-			for (; lx>=limitRange.minX; --lx) {
-				if (!check(pImageLine[lx])) {
-					break;
-				}
-			}
-			++lx;
-			for (int x=lx; x<pl; ++x) {
-				pFlagsLine[x] = 1;
-			}
-		}
-		// extend right
-		if (extendRight && rx == pr) {
-			for (; rx<=limitRange.maxX; ++rx) {
-				if (!check(pImageLine[rx])) {
-					break;
-				}
-			}
-			--rx;
-			for (int x=pr+1; x<=rx; ++x) {
-				pFlagsLine[x] = 1;
-			}
-		}
-
-		q[pos++] = {
-			{ lx, rx, y, },
-			{ pl, pr, py, },
-		};
-	};
 
 	{
 		// first line
@@ -233,10 +262,14 @@ void FloodFill_ScanLine2(
 
 		pFlagsLine -= flagsLineStride;
 		pImageLine -= imageLineStride;
-		scanline(py - 1, pl, pr, py, true, true);
-		pFlagsLine += 2 * flagsLineStride;
-		pImageLine += 2 * imageLineStride;
-		scanline(py + 1, pl, pr, py, true, true);
+		if (py - 1 >= limitRange.minY) {
+			scanline(py - 1, pl, pr, py, true, true, q, pos, limitRange, check, pImageLine, pFlagsLine);
+		}
+		if (py + 1 <= limitRange.maxY) {
+			pFlagsLine += 2 * flagsLineStride;
+			pImageLine += 2 * imageLineStride;
+			scanline(py + 1, pl, pr, py, true, true, q, pos, limitRange, check, pImageLine, pFlagsLine);
+		}
 	}
 	while (pos--) {
 		const Record& r = q[pos];
@@ -253,18 +286,22 @@ void FloodFill_ScanLine2(
 		int cy = pp.y;
 		int cl = pp.left;
 		int cr = pp.right;
-		if (cl < pl - 1) {
-			scanline(py, cl, pl - 2, cy, true, false);
-		}
-		if (cr > pr + 1) {
-			scanline(py, pr + 2, cr, cy, false, true);
+		if (py >= limitRange.minY && py <= limitRange.maxY) {
+			if (cl < pl - 1) {
+				scanline(py, cl, pl - 2, cy, true, false, q, pos, limitRange, check, pImageLine, pFlagsLine);
+			}
+			if (cr > pr + 1) {
+				scanline(py, pr + 2, cr, cy, false, true, q, pos, limitRange, check, pImageLine, pFlagsLine);
+			}
 		}
 		// 親と反対の方向のラインを調査
 		int diff = cy - py;
 		int y = cy + diff;
-		pFlagsLine += diff * 2 * flagsLineStride;
-		pImageLine += diff * 2 * imageLineStride;
-		scanline(y, cl, cr, cy, true, true);
+		if (y >= limitRange.minY && y <= limitRange.maxY) {
+			pFlagsLine += diff * 2 * flagsLineStride;
+			pImageLine += diff * 2 * imageLineStride;
+			scanline(y, cl, cr, cy, true, true, q, pos, limitRange, check, pImageLine, pFlagsLine);
+		}
 	}
 
 }
