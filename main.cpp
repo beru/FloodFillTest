@@ -56,66 +56,69 @@ void FloodFill_ScanLine(
 	CheckFunc check
 	)
 {
-	std::vector<Point> q(1024);
-	size_t pos = 1;
-	q[0] = pt;
-	while (pos--) {
-		pt = q[pos];
-		auto* pImageLine = &pImage[pt.y * imageLineStride];
-		auto* pFlagsLine = &pFlags[pt.y * flagsLineStride];
-		auto& flag = pFlagsLine[pt.x];
-		if (!flag && check(pImageLine[pt.x])) {
-			flag = 1;
+	std::vector<uint32_t> q(1024);
+	size_t pos = 0;
+	q[0] = (pt.y << 16) + pt.x;
+	do {
+		uint32_t xy = q[pos];
+		uint32_t px = xy & 0xFFFF;
+		uint32_t py = xy >> 16;
+		auto* pFlagsLine = &pFlags[py * flagsLineStride];
+		if (pFlagsLine[px]) {
+			continue;
+		}
+		auto* pImageLine = &pImage[py * imageLineStride];
+		if (check(pImageLine[px])) {
 			// left
-			int lx = pt.x - 1;
+			int lx = px - 1;
 			for (; lx>=limitRange.minX; --lx) {
-				if (check(pImageLine[lx])) {
-					pFlagsLine[lx] = 1;
-				}else {
+				if (!check(pImageLine[lx])) {
 					break;
 				}
 			}
 			++lx;
 			// right
-			auto rx = pt.x + 1;
+			auto rx = px + 1;
 			for (; rx<=limitRange.maxX; ++rx) {
-				if (check(pImageLine[rx])) {
-					pFlagsLine[rx] = 1;
-				}else {
+				if (!check(pImageLine[rx])) {
 					break;
 				}
 			}
 			--rx;
 
+			for (auto x=lx; x<=rx; ++x) {
+				pFlagsLine[x] = 1;
+			}
+
 			auto scanline = [&](int y) {
-				auto x = rx;
-				while (x >= lx) {
+				int x = rx;
+				do {
 					// 右端の有効ピクセルを見つけたら登録
-					for (; x >= lx; --x) {
-						if (check(pImageLine[x]) && !pFlagsLine[x]) {
-							q[pos++] = {x, y};
+					do {
+						if (check(pImageLine[x])) {
+							q[pos++] = x + y;
 							break;
 						}
-					}
+					} while (--x >= lx);
 					// 左に続く有効ピクセルはskip
 					for (; x >= lx; --x) {
 						if (!check(pImageLine[x])) {
 							break;
 						}
 					}
-				}
+				} while (x >= lx);
 			};
 			// up
 			pImageLine -= imageLineStride;
 			pFlagsLine -= flagsLineStride;
-			scanline(pt.y - 1);
+			scanline((py - 1) << 16);
 
 			// down
 			pImageLine += 2 * imageLineStride;
 			pFlagsLine += 2 * flagsLineStride;
-			scanline(pt.y + 1);
+			scanline((py + 1) << 16);
 		}
-	}
+	}while (pos--);
 }
 
 int main(int argc, char* argv[])
@@ -129,29 +132,33 @@ int main(int argc, char* argv[])
 	fread(pSrc, 1, WIDTH*HEIGHT, f);
 	fclose(f);
 	
-	std::vector<uint8_t> flags(WIDTH*HEIGHT);
-	uint8_t* pFlags = &flags[0];
-
 	Range limitRange = {
 		10, WIDTH-10,
 		10, HEIGHT-10,
 	};
 	Range filledRange;
 
+	std::vector<uint8_t> flags(WIDTH*HEIGHT);
+	uint8_t* pFlags = &flags[0];
+
 	Timer t;
 	t.Start();
-
-//	FloodFill(
-	FloodFill_ScanLine(
-		pSrc, WIDTH,
-		pFlags, WIDTH,
-		{WIDTH/2, HEIGHT/2},
-		limitRange,
-		filledRange,
-		[](uint8_t val) -> bool { return val >= 170; }
-	);
+	for (size_t i=0; i<128; ++i) {
+		
+		memset(pFlags, 0, WIDTH*HEIGHT);
+	//	FloodFill(
+		FloodFill_ScanLine(
+			pSrc, WIDTH,
+			pFlags, WIDTH,
+			{WIDTH/2, HEIGHT/2},
+			limitRange,
+			filledRange,
+			[](uint8_t val) -> bool { return val >= 170; }
+		);
+	}
 
 	printf("%f\n", t.ElapsedSecond());
+	printf("%p\n", pFlags);
 	
 	return 0;
 }
