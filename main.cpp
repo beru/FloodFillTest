@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <assert.h>
 #include <vector>
 #include "timer.h"
 
@@ -161,6 +162,9 @@ void scanline(
 	uint8_t* pFlagsLine
 	)
 {
+	for (int x=pl; x<=pr; ++x) {
+		assert(pFlagsLine[x] == 0);
+	}
 	int lx = INT_MAX;
 	int rx;
 	if (check(pImageLine[pl])) {
@@ -338,7 +342,7 @@ int main(int argc, char* argv[])
 
 	Timer t;
 	t.Start();
-	for (size_t i=0; i<1024; ++i) {
+	for (size_t i=0; i<1; ++i) {
 		
 		memset(pFlags, 0, WIDTH * HEIGHT);
 //		FloodFill(
