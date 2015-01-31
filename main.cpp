@@ -47,6 +47,7 @@ void FloodFill(
 }
 
 template <typename PixelType, typename CheckFunc>
+__forceinline
 void scanline(
 	int y,
 	int lx,
@@ -86,11 +87,11 @@ void FloodFill_ScanLine(
 	CheckFunc check
 	)
 {
-	uint32_t q[256];
+	uint32_t stack[256];
 	size_t pos = 0;
-	q[0] = (pt.y << 16) + pt.x;
+	stack[0] = (pt.y << 16) + pt.x;
 	do {
-		uint32_t xy = q[pos];
+		uint32_t xy = stack[pos];
 		uint32_t px = xy & 0xFFFF;
 		uint32_t py = xy >> 16;
 		auto* pFlagsLine = &pFlags[py * flagsLineStride];
@@ -123,12 +124,12 @@ void FloodFill_ScanLine(
 			// up
 			pImageLine -= imageLineStride;
 			pFlagsLine -= flagsLineStride;
-			scanline((py - 1) << 16, lx, rx, q, pos, check, pImageLine);
+			scanline((py - 1) << 16, lx, rx, stack, pos, check, pImageLine);
 
 			// down
 			pImageLine += 2 * imageLineStride;
 			pFlagsLine += 2 * flagsLineStride;
-			scanline((py + 1) << 16, lx, rx, q, pos, check, pImageLine);
+			scanline((py + 1) << 16, lx, rx, stack, pos, check, pImageLine);
 		}
 	}while (pos--);
 }
@@ -143,8 +144,9 @@ struct Record {
 	Position parent;
 };
 
-// 指定された左右範囲内とその左右を調査、レコード追加
+// 指定された左右範囲内とその左右延長を調査、レコード追加
 template <typename PixelType, typename CheckFunc>
+__forceinline
 void scanline(
 	int y,
 	int pl,
@@ -152,66 +154,81 @@ void scanline(
 	int py,
 	bool extendLeft,
 	bool extendRight,
-	Record* q,
-	size_t& pos,
+	Record*& pStackTop,
 	const Range& limitRange,
 	CheckFunc check,
 	PixelType* pImageLine,
-	uint8_t* pFlagsLine 
+	uint8_t* pFlagsLine
 	)
 {
-	int lx = -1;
-	// middle
-	int x = pl;
-	do {
-		if (check(pImageLine[x])) {
-			lx = x;
-			goto Label_0;
-		}
-	} while (++x <= pr);
-	return;
-Label_0:
-	pFlagsLine[lx] = 1;
-	int rx = lx + 1;
-	for (; rx <= pr; ++rx) {
-		if (check(pImageLine[rx])) {
-			pFlagsLine[rx] = 1;
-		}
-	}
-	--rx;
-
-	// extend left
-	if (extendLeft && lx == pl) {
-		--lx;
-		for (; lx>=limitRange.minX; --lx) {
-			if (!check(pImageLine[lx])) {
-				break;
+	int lx = INT_MAX;
+	int rx;
+	if (check(pImageLine[pl])) {
+		lx = rx = pl;
+		// extend left
+		if (extendLeft) {
+			--lx;
+			for (; lx>=limitRange.minX; --lx) {
+				if (!check(pImageLine[lx])) {
+					break;
+				}
+			}
+			++lx;
+			for (int x=lx; x<pl; ++x) {
+				pFlagsLine[x] = 1;
 			}
 		}
-		++lx;
-		for (int x=lx; x<pl; ++x) {
-			pFlagsLine[x] = 1;
-		}
-	}
-	// extend right
-	if (extendRight && rx == pr) {
-		++rx;
-		for (; rx<=limitRange.maxX; ++rx) {
-			if (!check(pImageLine[rx])) {
-				break;
+		pFlagsLine[pl] = 1;
+		for (int x=pl+1; x < pr; ++x) {
+			if (check(pImageLine[x])) {
+				pFlagsLine[x] = 1;
+				rx = x;
 			}
 		}
-		--rx;
-		for (int x=pr+1; x<=rx; ++x) {
-			pFlagsLine[x] = 1;
+	}else {
+		for (int x=pl+1; x<pr; ++x) {
+			if (check(pImageLine[x])) {
+				lx = rx = x;
+				pFlagsLine[lx] = 1;
+				for (++x; x < pr; ++x) {
+					if (check(pImageLine[x])) {
+						pFlagsLine[x] = 1;
+						rx = x;
+					}
+				}
+				goto Label_CheckR;
+			}
 		}
+		if (!check(pImageLine[pr])) {
+			return;
+		}
+		goto Label_CheckR2;
 	}
 
-	q[pos++] = {
+Label_CheckR:
+	if (check(pImageLine[pr])) {
+Label_CheckR2:
+		lx = min(lx, pr);
+		rx = pr;
+		pFlagsLine[pr] = 1;
+		if (extendRight) {
+			++rx;
+			for (; rx<=limitRange.maxX; ++rx) {
+				if (!check(pImageLine[rx])) {
+					break;
+				}
+			}
+			--rx;
+			for (int x=pr+1; x<=rx; ++x) {
+				pFlagsLine[x] = 1;
+			}
+		}
+	}
+	*pStackTop++ = {
 		{ lx, rx, y, },
 		{ pl, pr, py, },
 	};
-};
+}
 
 template <typename PixelType, typename CheckFunc>
 void FloodFill_ScanLine2(
@@ -223,9 +240,6 @@ void FloodFill_ScanLine2(
 	CheckFunc check
 	)
 {
-	Record q[64];
-	size_t pos = 0;
-
 	uint32_t px = pt.x;
 	uint32_t py = pt.y;
 	auto* pImageLine = &pImage[py * imageLineStride];
@@ -233,7 +247,8 @@ void FloodFill_ScanLine2(
 		return;
 	}
 	auto* pFlagsLine = &pFlags[py * flagsLineStride];
-
+	Record stack[64];
+	Record* pStackTop = stack;
 	{
 		// first line
 		// left
@@ -261,16 +276,16 @@ void FloodFill_ScanLine2(
 		pFlagsLine -= flagsLineStride;
 		pImageLine -= imageLineStride;
 		if (py - 1 >= limitRange.minY) {
-			scanline(py - 1, pl, pr, py, true, true, q, pos, limitRange, check, pImageLine, pFlagsLine);
+			scanline(py - 1, pl, pr, py, true, true, pStackTop, limitRange, check, pImageLine, pFlagsLine);
 		}
 		if (py + 1 <= limitRange.maxY) {
 			pFlagsLine += 2 * flagsLineStride;
 			pImageLine += 2 * imageLineStride;
-			scanline(py + 1, pl, pr, py, true, true, q, pos, limitRange, check, pImageLine, pFlagsLine);
+			scanline(py + 1, pl, pr, py, true, true, pStackTop, limitRange, check, pImageLine, pFlagsLine);
 		}
 	}
-	while (pos--) {
-		const Record& r = q[pos];
+	while (pStackTop > stack) {
+		const Record& r = *--pStackTop;
 
 		Position pp;
 		// 親と同じ方向のラインを調査
@@ -284,24 +299,21 @@ void FloodFill_ScanLine2(
 		int cy = pp.y;
 		int cl = pp.left;
 		int cr = pp.right;
-		if (py >= limitRange.minY && py <= limitRange.maxY) {
-			if (cl < pl - 1) {
-				scanline(py, cl, pl - 2, cy, true, false, q, pos, limitRange, check, pImageLine, pFlagsLine);
-			}
-			if (cr > pr + 1) {
-				scanline(py, pr + 2, cr, cy, false, true, q, pos, limitRange, check, pImageLine, pFlagsLine);
-			}
+		if (cl < pl - 1) {
+			scanline(py, cl, pl - 2, cy, true, false, pStackTop, limitRange, check, pImageLine, pFlagsLine);
+		}
+		if (cr > pr + 1) {
+			scanline(py, pr + 2, cr, cy, false, true, pStackTop, limitRange, check, pImageLine, pFlagsLine);
 		}
 		// 親と反対の方向のラインを調査
 		int diff = cy - py;
 		int y = cy + diff;
 		if (y >= limitRange.minY && y <= limitRange.maxY) {
-			pFlagsLine += diff * 2 * flagsLineStride;
-			pImageLine += diff * 2 * imageLineStride;
-			scanline(y, cl, cr, cy, true, true, q, pos, limitRange, check, pImageLine, pFlagsLine);
+			pFlagsLine = &pFlags[y * flagsLineStride];
+			pImageLine = &pImage[y * imageLineStride];
+			scanline(y, cl, cr, cy, true, true, pStackTop, limitRange, check, pImageLine, pFlagsLine);
 		}
 	}
-
 }
 
 int main(int argc, char* argv[])
@@ -326,7 +338,7 @@ int main(int argc, char* argv[])
 
 	Timer t;
 	t.Start();
-	for (size_t i=0; i<128; ++i) {
+	for (size_t i=0; i<1024; ++i) {
 		
 		memset(pFlags, 0, WIDTH * HEIGHT);
 //		FloodFill(
