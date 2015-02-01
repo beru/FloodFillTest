@@ -147,8 +147,6 @@ void FloodFill_ScanLine(
 
 struct Record {
 	uint16_t py;	// parent y
-	uint16_t pl;	// parent left
-	uint16_t pr;	// parent right
 	uint16_t cy;	// current y
 	uint16_t cl;	// current left
 	uint16_t cr;	// current right
@@ -166,8 +164,6 @@ void scanline(
 	)
 {
 	Record rec = *pStackTop;
-	int pl = rec.pl;
-	int pr = rec.pr;
 	int py = rec.py;
 	int cl = rec.cl;
 	int cr = rec.cr;
@@ -180,34 +176,32 @@ void scanline(
 	int lx, rx;
 	int cy = rec.cy;
 	// 親行の有効範囲の左端位置が調査行でも有効なら
-	if (check(pImageLine[pl])) {
+	if (check(pImageLine[cl])) {
 		// 左端延長の調査
-		lx = pl - 1;
+		lx = cl - 1;
 		for (; lx>=ll; --lx) {
 			if (!check(pImageLine[lx])) {
 				break;
 			}
 		}
 		++lx;
-		if (pl - lx >= 2) {
+		if (cl - lx >= 2) {
 			// 親行の有効範囲の左側を調査
 			*pStackTop++ = {
 				cy,
-				lx,
-				pl - 2,
 				py,
-				pl - 2,
-				pl - 2,
+				lx,
+				cl - 2,
 			};
 		}
-		rx = pl;
+		rx = cl;
 	}else {
 		// 親行の有効範囲の左端位置は調査行では無効だったので、開始位置をループで調べる
 		// なお、親行の有効範囲の左側を調査しない事は自明
-		if (pFlagsLine[cr]) {
-			return;
-		}
-		for (int x=pl+1; x<=pr; ++x) {
+//		if (pFlagsLine[cr]) {
+//			return;
+//		}
+		for (int x=cl+1; x<=cr; ++x) {
 			if (check(pImageLine[x])) {
 				// 開始位置が見つかった
 				lx = rx = x;
@@ -221,7 +215,7 @@ void scanline(
 Label_FindRX:
 
 	// 連続する有効範囲を調査
-	for (++rx; rx<pr; ++rx) {
+	for (++rx; rx<cr; ++rx) {
 		if (!check(pImageLine[rx])) {
 			break;
 		}
@@ -244,8 +238,6 @@ Label_FindRX:
 		// 親行と反対側の行を調査する
 		*pStackTop++ = {
 			cy,
-			lx,
-			rx,
 			ny,
 			lx,
 			rx,
@@ -253,10 +245,10 @@ Label_FindRX:
 	}
 	
 	// 親行の有効範囲の右端より２つ以上手前で終わっていた場合は
-	if (pr - rx >= 2) {
+	if (cr - rx >= 2) {
 		// まだ右端まで到達していないので２つ先から調査継続
 		int lx2 = rx + 2;
-		for (; lx2<=pr; ++lx2) {
+		for (; lx2<=cr; ++lx2) {
 			if (check(pImageLine[lx2])) {
 				// その先に有効範囲の左端が見つかったら、連続する有効範囲を調査
 				lx = lx2;
@@ -266,14 +258,12 @@ Label_FindRX:
 		}
 	}else {
 		// 右端より２つ以上先で終わっていた場合は
-		if (rx - pr >= 2) {
+		if (rx - cr >= 2) {
 			// 親行の有効範囲の右側を調査する
 			*pStackTop++ = {
 				cy,
-				lx,
-				rx,
 				py,
-				pr + 2,
+				cr + 2,
 				rx,
 			};
 		}
@@ -327,8 +317,6 @@ void FloodFill_ScanLine2(
 		if (py - 1 >= limitRange.minY) {
 			*pStackTop++ = {
 				py,
-				pl,
-				pr,
 				py - 1,
 				pl,
 				pr,
@@ -337,8 +325,6 @@ void FloodFill_ScanLine2(
 		if (py + 1 <= limitRange.maxY) {
 			*pStackTop++ = {
 				py,
-				pl,
-				pr,
 				py + 1,
 				pl,
 				pr,
@@ -376,20 +362,21 @@ int main(int argc, char* argv[])
 	printf("%p\n", pFlags);
 	Timer t;
 	t.Start();
-	for (size_t i=192; i<256; ++i) {
-		
-		memset(pFlags, 0, WIDTH * HEIGHT);
-//		FloodFill(
-//		FloodFill_ScanLine(
-		FloodFill_ScanLine2(
-			pSrc, WIDTH,
-			pFlags, WIDTH,
-			{WIDTH/2, HEIGHT/2},
-			limitRange,
-			filledRange,
-			[=](uint8_t val) -> bool { return val >= i; }
-		);
-//		printf("%d\n", i);
+	for (size_t nTest=0; nTest<10; ++nTest) {
+		for (size_t i=128; i<256; ++i) {
+			memset(pFlags, 0, WIDTH * HEIGHT);
+			//FloodFill(
+			//FloodFill_ScanLine(
+			FloodFill_ScanLine2(
+				pSrc, WIDTH,
+				pFlags, WIDTH,
+				{WIDTH/2, HEIGHT/2},
+				limitRange,
+				filledRange,
+				[=](uint8_t val) -> bool { return val >= i; }
+			);
+			//printf("%d\n", i);
+		}
 	}
 
 	printf("%f\n", t.ElapsedSecond());
