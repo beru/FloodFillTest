@@ -167,7 +167,7 @@ void scanline(
 	int py = rec.py;
 	int cl = rec.cl;
 	int cr = rec.cr;
-	// 既に記録済みな場合、飛ばして調査
+	// 既に記録済みなら終了
 	if (pFlagsLine[cl]) {
 		return;
 	}
@@ -175,7 +175,7 @@ void scanline(
 	int lr = limitRange.maxX;
 	int lx, rx;
 	int cy = rec.cy;
-	// 親行の有効範囲の左端位置が調査行でも有効なら
+	// 調査範囲の左端位置が有効なら
 	if (check(pImageLine[cl])) {
 		// 左端延長の調査
 		lx = cl - 1;
@@ -186,7 +186,7 @@ void scanline(
 		}
 		++lx;
 		if (cl - lx >= 2) {
-			// 親行の有効範囲の左側を調査
+			// 親行の左側を調査
 			*pStackTop++ = {
 				cy,
 				py,
@@ -196,12 +196,13 @@ void scanline(
 		}
 		rx = cl;
 	}else {
-		// 親行の有効範囲の左端位置は調査行では無効だったので、開始位置をループで調べる
-		// なお、親行の有効範囲の左側を調査しない事は自明
-//		if (pFlagsLine[cr]) {
-//			return;
-//		}
+		// 調査範囲の左端位置は無効だったので、開始位置をループで調べる
+		// なお、親行の左側を調査しない事は自明
 		for (int x=cl+1; x<=cr; ++x) {
+			// 既に記録済みなら終了
+			if (pFlagsLine[x]) {
+				return;
+			}
 			if (check(pImageLine[x])) {
 				// 開始位置が見つかった
 				lx = rx = x;
@@ -244,22 +245,22 @@ Label_FindRX:
 		};
 	}
 	
-	// 親行の有効範囲の右端より２つ以上手前で終わっていた場合は
+	// 調査範囲の右端より２つ以上手前で終わっていた場合は
 	if (cr - rx >= 2) {
 		// まだ右端まで到達していないので２つ先から調査継続
 		int lx2 = rx + 2;
 		for (; lx2<=cr; ++lx2) {
 			if (check(pImageLine[lx2])) {
-				// その先に有効範囲の左端が見つかったら、連続する有効範囲を調査
+				// その先に左端が見つかったら、連続する有効範囲を調査
 				lx = lx2;
 				rx = lx2;
 				goto Label_FindRX;
 			}
 		}
 	}else {
-		// 右端より２つ以上先で終わっていた場合は
+		// 調査範囲の右端より２つ以上先で終わっていた場合は
 		if (rx - cr >= 2) {
-			// 親行の有効範囲の右側を調査する
+			// 親行の右側を調査する
 			*pStackTop++ = {
 				cy,
 				py,
@@ -363,7 +364,7 @@ int main(int argc, char* argv[])
 	Timer t;
 	t.Start();
 	for (size_t nTest=0; nTest<10; ++nTest) {
-		for (size_t i=128; i<256; ++i) {
+		for (size_t i=0; i<256; ++i) {
 			memset(pFlags, 0, WIDTH * HEIGHT);
 			//FloodFill(
 			//FloodFill_ScanLine(
