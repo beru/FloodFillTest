@@ -253,11 +253,11 @@ void FloodFill_ScanLine2(
 			// 調査範囲の左端位置は無効だったので、開始位置をループで調べる
 			// なお、親行の左側を調査しない事は自明
 			for (int x=cl+1; x<=cr; ++x) {
-				// 既に記録済みなら終了
-				if (pFlagsLine[x]) {
-					goto Label_Continue;
-				}
 				if (check(pImageLine[x])) {
+					// 既に記録済みなら終了
+					if (pFlagsLine[x]) {
+						goto Label_Continue;
+					}
 					// 開始位置が見つかった
 					lx = rx = x;
 					goto Label_FindRX;
