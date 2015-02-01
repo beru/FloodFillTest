@@ -150,8 +150,8 @@ struct Record {
 	uint16_t pl;	// parent left
 	uint16_t pr;	// parent right
 	uint16_t cy;	// current y
-	uint16_t ll;	// limit left 
-	uint16_t lr;	// limit right 
+	uint16_t cl;	// current left
+	uint16_t cr;	// current right
 };
 
 // 指定ライン調査、レコード追加
@@ -169,13 +169,15 @@ void scanline(
 	int pl = rec.pl;
 	int pr = rec.pr;
 	int py = rec.py;
-	// 既に記録済みなので終了
-	if (pFlagsLine[pl]) {
+	int cl = rec.cl;
+	int cr = rec.cr;
+	// 既に記録済みな場合、飛ばして調査
+	if (pFlagsLine[cl]) {
 		return;
 	}
+	int ll = limitRange.minX;
+	int lr = limitRange.maxX;
 	int lx, rx;
-	int ll = rec.ll;
-	int lr = rec.lr;
 	int cy = rec.cy;
 	// 親行の有効範囲の左端位置が調査行でも有効なら
 	if (check(pImageLine[pl])) {
@@ -194,7 +196,7 @@ void scanline(
 				lx,
 				pl - 2,
 				py,
-				ll,
+				pl - 2,
 				pl - 2,
 			};
 		}
@@ -202,13 +204,13 @@ void scanline(
 	}else {
 		// 親行の有効範囲の左端位置は調査行では無効だったので、開始位置をループで調べる
 		// なお、親行の有効範囲の左側を調査しない事は自明
+		if (pFlagsLine[cr]) {
+			return;
+		}
 		for (int x=pl+1; x<=pr; ++x) {
 			if (check(pImageLine[x])) {
 				// 開始位置が見つかった
 				lx = rx = x;
-				if (pFlagsLine[lx]) {
-					return;
-				}
 				goto Label_FindRX;
 			}
 		}
@@ -245,8 +247,8 @@ Label_FindRX:
 			lx,
 			rx,
 			ny,
-			ll,
-			lr,
+			lx,
+			rx,
 		};
 	}
 	
@@ -267,12 +269,12 @@ Label_FindRX:
 		if (rx - pr >= 2) {
 			// 親行の有効範囲の右側を調査する
 			*pStackTop++ = {
-				py,
-				pr + 1,
-				lr,
 				cy,
-				pr + 1,
-				lr,
+				lx,
+				rx,
+				py,
+				pr + 2,
+				rx,
 			};
 		}
 	}
@@ -298,8 +300,8 @@ void FloodFill_ScanLine2(
 	auto* pFlagsLine = &pFlags[py * flagsLineStride];
 	Record stack[64];
 	Record* pStackTop = stack;
+	// first line
 	{
-		// first line
 		// left
 		int pl = px - 1;
 		for (; pl>=limitRange.minX; --pl) {
@@ -328,8 +330,8 @@ void FloodFill_ScanLine2(
 				pl,
 				pr,
 				py - 1,
-				limitRange.minX,
-				limitRange.maxX,
+				pl,
+				pr,
 			};
 		}
 		if (py + 1 <= limitRange.maxY) {
@@ -338,8 +340,8 @@ void FloodFill_ScanLine2(
 				pl,
 				pr,
 				py + 1,
-				limitRange.minX,
-				limitRange.maxX,
+				pl,
+				pr,
 			};
 		}
 	}
@@ -374,12 +376,12 @@ int main(int argc, char* argv[])
 	printf("%p\n", pFlags);
 	Timer t;
 	t.Start();
-	for (size_t i=0; i<256; ++i) {
+	for (size_t i=192; i<256; ++i) {
 		
 		memset(pFlags, 0, WIDTH * HEIGHT);
 //		FloodFill(
-		FloodFill_ScanLine(
-//		FloodFill_ScanLine2(
+//		FloodFill_ScanLine(
+		FloodFill_ScanLine2(
 			pSrc, WIDTH,
 			pFlags, WIDTH,
 			{WIDTH/2, HEIGHT/2},
@@ -387,6 +389,7 @@ int main(int argc, char* argv[])
 			filledRange,
 			[=](uint8_t val) -> bool { return val >= i; }
 		);
+//		printf("%d\n", i);
 	}
 
 	printf("%f\n", t.ElapsedSecond());
