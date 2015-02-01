@@ -260,13 +260,17 @@ void FloodFill_ScanLine2(
 					}
 					// 開始位置が見つかった
 					lx = rx = x;
-					goto Label_FindRX;
+					goto Label_StartFindRX;
 				}
 			}
 			// 全く見つからないので終了
 			continue;
 		}
-	
+
+	Label_StartFindRX:
+		int gy = cy + cy - py;
+		bool isGyAvailable = (gy >= limitRange.minY && gy <= limitRange.maxY);
+		
 	Label_FindRX:
 
 		// 連続する有効範囲を調査
@@ -288,12 +292,11 @@ void FloodFill_ScanLine2(
 		}
 
 		// 親行と反対の行
-		int ny = cy + cy - py;
-		if (ny >= limitRange.minY && ny <= limitRange.maxY) {
+		if (isGyAvailable) {
 			// 親行と反対側の行を調査する
 			*pStackTop++ = {
 				cy,
-				ny,
+				gy,
 				lx,
 				rx,
 			};
