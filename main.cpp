@@ -152,126 +152,6 @@ struct Record {
 	uint16_t cr;	// current right
 };
 
-// 指定ライン調査、レコード追加
-template <typename PixelType, typename CheckFunc>
-__forceinline
-void scanline(
-	Record*& pStackTop,
-	CheckFunc check,
-	const Range& limitRange,
-	PixelType* pImageLine,
-	uint8_t* pFlagsLine
-	)
-{
-	Record rec = *pStackTop;
-	int py = rec.py;
-	int cl = rec.cl;
-	int cr = rec.cr;
-	// 既に記録済みなら終了
-	if (pFlagsLine[cl]) {
-		return;
-	}
-	int ll = limitRange.minX;
-	int lr = limitRange.maxX;
-	int lx, rx;
-	int cy = rec.cy;
-	// 調査範囲の左端位置が有効なら
-	if (check(pImageLine[cl])) {
-		// 左端延長の調査
-		lx = cl - 1;
-		for (; lx>=ll; --lx) {
-			if (!check(pImageLine[lx])) {
-				break;
-			}
-		}
-		++lx;
-		if (cl - lx >= 2) {
-			// 親行の左側を調査
-			*pStackTop++ = {
-				cy,
-				py,
-				lx,
-				cl - 2,
-			};
-		}
-		rx = cl;
-	}else {
-		// 調査範囲の左端位置は無効だったので、開始位置をループで調べる
-		// なお、親行の左側を調査しない事は自明
-		for (int x=cl+1; x<=cr; ++x) {
-			// 既に記録済みなら終了
-			if (pFlagsLine[x]) {
-				return;
-			}
-			if (check(pImageLine[x])) {
-				// 開始位置が見つかった
-				lx = rx = x;
-				goto Label_FindRX;
-			}
-		}
-		// 全く見つからないので終了
-		return;
-	}
-	
-Label_FindRX:
-
-	// 連続する有効範囲を調査
-	for (++rx; rx<cr; ++rx) {
-		if (!check(pImageLine[rx])) {
-			break;
-		}
-	}
-	for (; rx<=lr; ++rx) {
-		if (!check(pImageLine[rx])) {
-			break;
-		}
-	}
-	--rx;
-
-	// 有効範囲の記録
-	for (int x=lx; x<=rx; ++x) {
-		pFlagsLine[x] = 1;
-	}
-
-	// 親行と反対の行
-	int ny = cy + cy - py;
-	if (ny >= limitRange.minY && ny <= limitRange.maxY) {
-		// 親行と反対側の行を調査する
-		*pStackTop++ = {
-			cy,
-			ny,
-			lx,
-			rx,
-		};
-	}
-	
-	// 調査範囲の右端より２つ以上手前で終わっていた場合は
-	if (cr - rx >= 2) {
-		// まだ右端まで到達していないので２つ先から調査継続
-		int lx2 = rx + 2;
-		for (; lx2<=cr; ++lx2) {
-			if (check(pImageLine[lx2])) {
-				// その先に左端が見つかったら、連続する有効範囲を調査
-				lx = lx2;
-				rx = lx2;
-				goto Label_FindRX;
-			}
-		}
-	}else {
-		// 調査範囲の右端より２つ以上先で終わっていた場合は
-		if (rx - cr >= 2) {
-			// 親行の右側を調査する
-			*pStackTop++ = {
-				cy,
-				py,
-				cr + 2,
-				rx,
-			};
-		}
-	}
-	
-}
-
 template <typename PixelType, typename CheckFunc>
 void FloodFill_ScanLine2(
 	const PixelType* pImage, int imageLineStride,
@@ -334,10 +214,117 @@ void FloodFill_ScanLine2(
 	}
 	while (pStackTop > stack) {
 		--pStackTop;
-		uint16_t cy = pStackTop->cy;
+		int cy = pStackTop->cy;
 		pImageLine = &pImage[cy * imageLineStride];
 		pFlagsLine = &pFlags[cy * flagsLineStride];
-		scanline(pStackTop, check, limitRange, pImageLine, pFlagsLine);
+
+		Record rec = *pStackTop;
+		int py = rec.py;
+		int cl = rec.cl;
+		int cr = rec.cr;
+		// 既に記録済みなら終了
+		if (pFlagsLine[cl]) {
+			continue;
+		}
+		int ll = limitRange.minX;
+		int lr = limitRange.maxX;
+		int lx, rx;
+		// 調査範囲の左端位置が有効なら
+		if (check(pImageLine[cl])) {
+			// 左端延長の調査
+			lx = cl - 1;
+			for (; lx>=ll; --lx) {
+				if (!check(pImageLine[lx])) {
+					break;
+				}
+			}
+			++lx;
+			if (cl - lx >= 2) {
+				// 親行の左側を調査
+				*pStackTop++ = {
+					cy,
+					py,
+					lx,
+					cl - 2,
+				};
+			}
+			rx = cl;
+		}else {
+			// 調査範囲の左端位置は無効だったので、開始位置をループで調べる
+			// なお、親行の左側を調査しない事は自明
+			for (int x=cl+1; x<=cr; ++x) {
+				// 既に記録済みなら終了
+				if (pFlagsLine[x]) {
+					goto Label_Continue;
+				}
+				if (check(pImageLine[x])) {
+					// 開始位置が見つかった
+					lx = rx = x;
+					goto Label_FindRX;
+				}
+			}
+			// 全く見つからないので終了
+			continue;
+		}
+	
+	Label_FindRX:
+
+		// 連続する有効範囲を調査
+		for (++rx; rx<cr; ++rx) {
+			if (!check(pImageLine[rx])) {
+				break;
+			}
+		}
+		for (; rx<=lr; ++rx) {
+			if (!check(pImageLine[rx])) {
+				break;
+			}
+		}
+		--rx;
+
+		// 有効範囲の記録
+		for (int x=lx; x<=rx; ++x) {
+			pFlagsLine[x] = 1;
+		}
+
+		// 親行と反対の行
+		int ny = cy + cy - py;
+		if (ny >= limitRange.minY && ny <= limitRange.maxY) {
+			// 親行と反対側の行を調査する
+			*pStackTop++ = {
+				cy,
+				ny,
+				lx,
+				rx,
+			};
+		}
+	
+		// 調査範囲の右端より２つ以上手前で終わっていた場合は
+		if (cr - rx >= 2) {
+			// まだ右端まで到達していないので２つ先から調査継続
+			int lx2 = rx + 2;
+			for (; lx2<=cr; ++lx2) {
+				if (check(pImageLine[lx2])) {
+					// その先に左端が見つかったら、連続する有効範囲を調査
+					lx = lx2;
+					rx = lx2;
+					goto Label_FindRX;
+				}
+			}
+		}else {
+			// 調査範囲の右端より２つ以上先で終わっていた場合は
+			if (rx - cr >= 2) {
+				// 親行の右側を調査する
+				*pStackTop++ = {
+					cy,
+					py,
+					cr + 2,
+					rx,
+				};
+			}
+		}
+	Label_Continue:
+		;
 	}
 }
 
