@@ -190,7 +190,8 @@ void FloodFill_ScanLine2(
 		--pr;
 
 		// fill middle
-		for (int x=pl; x<=pr; ++x) {
+		pFlagsLine[pl] = 1;
+		for (int x=pl+1; x<=pr; ++x) {
 			pFlagsLine[x] = 1;
 		}
 
@@ -209,8 +210,8 @@ void FloodFill_ScanLine2(
 		pFlagsLine = &pFlags[cy * flagsLineStride];
 		int cl = *--pStackTop;
 		int cr = *--pStackTop;
-		bool isGyAvailable = (dir > 0) ? (cy <= limitRange.maxY) : (cy >= limitRange.minY);
-//		bool isGyAvailable = ((cy - limitRange.minY) <= (limitRange.maxY - limitRange.minY));
+		//bool isGyAvailable = (dir > 0) ? (cy <= limitRange.maxY) : (cy >= limitRange.minY);
+		bool isGyAvailable = ((cy - limitRange.minY) <= (limitRange.maxY - limitRange.minY));
 		if (!isGyAvailable) {
 			continue;
 		}
@@ -273,7 +274,8 @@ void FloodFill_ScanLine2(
 		--rx;
 
 		// 有効範囲の記録
-		for (int x=lx; x<=rx; ++x) {
+		pFlagsLine[lx] = 1;
+		for (int x=lx+1; x<=rx; ++x) {
 			pFlagsLine[x] = 1;
 		}
 
@@ -282,10 +284,14 @@ void FloodFill_ScanLine2(
 		*pStackTop++ = lx;
 		*pStackTop++ = cy;
 
-		// 調査範囲の右端より２つ以上手前で終わっていた場合は
-		if (cr - rx >= 2) {
-
-
+		if (cr - rx < 2) {
+			if (rx - cr >= 2) {
+				// 調査範囲の右端より２つ以上先で終わっていた場合は親行の右側を調査する				*pStackTop++ = rx;
+				*pStackTop++ = cr + 2;
+				*pStackTop++ = -cy;
+			}
+		}else {
+			// 調査範囲の右端より２つ以上手前で終わっていた場合は
 			// まだ右端まで到達していないので２つ先から調査継続
 			int lx2 = rx + 2;
 			for (; lx2<cr; ++lx2) {
@@ -301,14 +307,6 @@ void FloodFill_ScanLine2(
 				lx = lx2;
 				rx = lx2 + 1;
 				goto Label_FindRX2;
-			}
-		}else {
-			// 調査範囲の右端より２つ以上先で終わっていた場合は
-			if (rx - cr >= 2) {
-				// 親行の右側を調査する
-				*pStackTop++ = rx;
-				*pStackTop++ = cr + 2;
-				*pStackTop++ = -cy;
 			}
 		}
 		goto Label_Do;
