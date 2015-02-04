@@ -146,7 +146,7 @@ void FloodFill_ScanLine(
 }
 
 //struct Record {
-//	int16_t py;		// parent y, sign bit indicates curren line direction
+//	int16_t py;		// parent y, sign bit indicates current line direction
 //	uint16_t cl;	// current left
 //	uint16_t cr;	// current right
 //};
@@ -190,8 +190,7 @@ void FloodFill_ScanLine2(
 		--pr;
 
 		// fill middle
-		pFlagsLine[pl] = 1;
-		for (int x=pl+1; x<=pr; ++x) {
+		for (int x=pl; x<=pr; ++x) {
 			pFlagsLine[x] = 1;
 		}
 
@@ -203,23 +202,21 @@ void FloodFill_ScanLine2(
 		*pStackTop++ = +py;
 	}
 	do {
-	Label_Do:
 		py = *--pStackTop;
 		int dir = (py < 0) ? -1 : +1;
-		int cy = abs(py) + dir;
+		int cy = abs(py + 1);
 		pFlagsLine = &pFlags[cy * flagsLineStride];
+		pImageLine = &pImage[cy * imageLineStride];
 		int cl = *--pStackTop;
 		int cr = *--pStackTop;
-		//bool isGyAvailable = (dir > 0) ? (cy <= limitRange.maxY) : (cy >= limitRange.minY);
-		bool isGyAvailable = ((cy - limitRange.minY) <= (limitRange.maxY - limitRange.minY));
-		if (!isGyAvailable) {
+		assert(cl >= 0);
+		assert(cr >= 0);
+	Label_Do:
+		bool isGyAvailable = (dir > 0) ? (cy <= limitRange.maxY) : (cy >= limitRange.minY);
+		// 領域外だったり既に記録済みなら終了
+		if (!isGyAvailable || pFlagsLine[cl]) {
 			continue;
 		}
-		// 既に記録済みなら終了
-		if (pFlagsLine[cl]) {
-			continue;
-		}
-		pImageLine = &pImage[cy * imageLineStride];
 		int lx, rx;
 		// 調査範囲の左端位置が有効なら
 		if (check(pImageLine[cl])) {
@@ -231,13 +228,14 @@ void FloodFill_ScanLine2(
 				}
 			}
 			++lx;
+			cy *= dir;
 			if (cl - lx >= 2) {
 				// 親行の左側を調査
 				*pStackTop++ = cl - 2;
 				*pStackTop++ = lx;
-				*pStackTop++ = cy * -dir;
+				*pStackTop++ = -cy;
 			}
-			rx = cl;
+			rx = lx + 1;
 		}else {
 			// 調査範囲の左端位置は無効だったので、開始位置をループで調べる
 			// なお、親行の左側を調査しない事は自明
@@ -245,22 +243,22 @@ void FloodFill_ScanLine2(
 				if (check(pImageLine[x])) {
 					// 既に記録済みなら終了
 					if (pFlagsLine[x]) {
-						goto Label_Continue;
+						break;
 					}
 					// 開始位置が見つかった
-					lx = rx = x;
-					goto Label_StartFindRX;
+					lx = x;
+					rx = x + 1;
+					cy *= dir;
+					goto Label_FindRX;
 				}
 			}
 			// 全く見つからないので終了
 			continue;
 		}
 
-	Label_StartFindRX:
-		cy *= dir;
 		// 連続する有効範囲を調査
 	Label_FindRX:
-		for (++rx; rx<cr; ++rx) {
+		for (; rx<cr; ++rx) {
 			if (!check(pImageLine[rx])) {
 				break;
 			}
@@ -274,19 +272,14 @@ void FloodFill_ScanLine2(
 		--rx;
 
 		// 有効範囲の記録
-		pFlagsLine[lx] = 1;
-		for (int x=lx+1; x<=rx; ++x) {
+		for (int x=lx; x<=rx; ++x) {
 			pFlagsLine[x] = 1;
 		}
 
-		// 親行と反対側の行を調査する
-		*pStackTop++ = rx;
-		*pStackTop++ = lx;
-		*pStackTop++ = cy;
-
 		if (cr - rx < 2) {
 			if (rx - cr >= 2) {
-				// 調査範囲の右端より２つ以上先で終わっていた場合は親行の右側を調査する				*pStackTop++ = rx;
+				// 調査範囲の右端より２つ以上先で終わっていた場合は親行の右側を調査する
+				*pStackTop++ = rx;
 				*pStackTop++ = cr + 2;
 				*pStackTop++ = -cy;
 			}
@@ -296,22 +289,38 @@ void FloodFill_ScanLine2(
 			int lx2 = rx + 2;
 			for (; lx2<cr; ++lx2) {
 				if (check(pImageLine[lx2])) {
+					// 親行と反対側の行を調査する
+					*pStackTop++ = rx;
+					*pStackTop++ = lx;
+					*pStackTop++ = cy;
+
 					// その先に左端が見つかったら、連続する有効範囲を調査
 					lx = lx2;
-					rx = lx2;
+					rx = lx2 + 1;
 					goto Label_FindRX;
 				}
 			}
 			if (check(pImageLine[lx2])) {
+				// 親行と反対側の行を調査する
+				*pStackTop++ = rx;
+				*pStackTop++ = lx;
+				*pStackTop++ = cy;
+
 				// その先に左端が見つかったら、連続する有効範囲を調査
 				lx = lx2;
 				rx = lx2 + 1;
 				goto Label_FindRX2;
 			}
 		}
+		// 親行と反対側の行を調査する
+		py = cy;
+		cy = abs(cy + 1);
+		pFlagsLine += dir * flagsLineStride;
+		pImageLine += dir * imageLineStride;
+		cl = lx;
+		cr = rx;
 		goto Label_Do;
-	Label_Continue:
-		;
+
 	} while (pStackTop > stack);
 }
 
