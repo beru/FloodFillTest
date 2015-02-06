@@ -6,6 +6,8 @@
 #include <vector>
 #include "timer.h"
 
+unsigned long long g_time_fill;
+
 struct Range {
 	uint16_t minX;
 	uint16_t maxX;
@@ -201,10 +203,14 @@ void FloodFill_ScanLine2(
 		*pStackTop++ = pl;
 		*pStackTop++ = +py;
 	}
+	const uint16_t maxMinRange = limitRange.maxY - limitRange.minY;
 	do {
 		py = *--pStackTop;
 		int dir = (py < 0) ? -1 : +1;
-		int cy = abs(py + 1);
+		int cy0 = py + 1;
+		int cy = abs(cy0);
+		assert(cy0 == cy*dir);
+		assert(cy == abs(py + 1));
 		pFlagsLine = &pFlags[cy * flagsLineStride];
 		pImageLine = &pImage[cy * imageLineStride];
 		int cl = *--pStackTop;
@@ -212,7 +218,12 @@ void FloodFill_ScanLine2(
 		assert(cl >= 0);
 		assert(cr >= 0);
 	Label_Do:
-		bool isGyAvailable = (dir > 0) ? (cy <= limitRange.maxY) : (cy >= limitRange.minY);
+//unsigned int id;
+//auto started = __rdtscp(&id);
+		//bool isGyAvailable = (dir > 0) ? (cy <= limitRange.maxY) : (cy >= limitRange.minY);
+		bool isGyAvailable = (unsigned)(cy - limitRange.minY) <= maxMinRange;
+//auto ended = __rdtscp(&id);
+//g_time_fill += ended - started;
 		// 領域外だったり既に記録済みなら終了
 		if (!isGyAvailable || pFlagsLine[cl]) {
 			continue;
@@ -228,12 +239,11 @@ void FloodFill_ScanLine2(
 				}
 			}
 			++lx;
-			cy *= dir;
 			if (cl - lx >= 2) {
 				// 親行の左側を調査
 				*pStackTop++ = cl - 2;
 				*pStackTop++ = lx;
-				*pStackTop++ = -cy;
+				*pStackTop++ = -cy0;
 			}
 			rx = lx + 1;
 		}else {
@@ -248,7 +258,6 @@ void FloodFill_ScanLine2(
 					// 開始位置が見つかった
 					lx = x;
 					rx = x + 1;
-					cy *= dir;
 					goto Label_FindRX;
 				}
 			}
@@ -258,11 +267,25 @@ void FloodFill_ScanLine2(
 
 		// 連続する有効範囲を調査
 	Label_FindRX:
+#if 1
 		for (; rx<cr; ++rx) {
 			if (!check(pImageLine[rx])) {
 				break;
 			}
 		}
+#else
+		__m128i 
+		_mm_loadu_si128
+		_mm_sub_epi8
+		_mm_cmpgt_epi8 (__m128i a, __m128i b)
+		_mm_movemask_epi8
+		_tzcnt_u32
+		POPCNT
+		_BitScanForward
+		https://geidav.wordpress.com/2014/03/06/on-finding-1-bit-sequences/
+	
+		_tzcnt_u32();
+#endif
 	Label_FindRX2:
 		for (; rx<=limitRange.maxX; ++rx) {
 			if (!check(pImageLine[rx])) {
@@ -275,13 +298,12 @@ void FloodFill_ScanLine2(
 		for (int x=lx; x<=rx; ++x) {
 			pFlagsLine[x] = 1;
 		}
-
 		if (cr - rx < 2) {
 			if (rx - cr >= 2) {
 				// 調査範囲の右端より２つ以上先で終わっていた場合は親行の右側を調査する
 				*pStackTop++ = rx;
 				*pStackTop++ = cr + 2;
-				*pStackTop++ = -cy;
+				*pStackTop++ = -cy0;
 			}
 		}else {
 			// 調査範囲の右端より２つ以上手前で終わっていた場合は
@@ -292,7 +314,7 @@ void FloodFill_ScanLine2(
 					// 親行と反対側の行を調査する
 					*pStackTop++ = rx;
 					*pStackTop++ = lx;
-					*pStackTop++ = cy;
+					*pStackTop++ = cy0;
 
 					// その先に左端が見つかったら、連続する有効範囲を調査
 					lx = lx2;
@@ -304,7 +326,7 @@ void FloodFill_ScanLine2(
 				// 親行と反対側の行を調査する
 				*pStackTop++ = rx;
 				*pStackTop++ = lx;
-				*pStackTop++ = cy;
+				*pStackTop++ = cy0;
 
 				// その先に左端が見つかったら、連続する有効範囲を調査
 				lx = lx2;
@@ -313,8 +335,9 @@ void FloodFill_ScanLine2(
 			}
 		}
 		// 親行と反対側の行を調査する
-		py = cy;
-		cy = abs(cy + 1);
+		py = cy0;
+		cy0 += 1;
+		cy = abs(cy0);
 		pFlagsLine += dir * flagsLineStride;
 		pImageLine += dir * imageLineStride;
 		cl = lx;
@@ -346,6 +369,9 @@ int main(int argc, char* argv[])
 	printf("%p\n", pFlags);
 	Timer t;
 	t.Start();
+
+	unsigned int id;
+	unsigned long long started = __rdtscp(&id);
 	for (size_t nTest=0; nTest<10; ++nTest) {
 		for (size_t i=0; i<256; ++i) {
 			memset(pFlags, 0, WIDTH * HEIGHT);
@@ -362,8 +388,10 @@ int main(int argc, char* argv[])
 			//printf("%d\n", i);
 		}
 	}
+	unsigned long long ended = __rdtscp(&id);
 
-	printf("%f\n", t.ElapsedSecond());
+	printf("%llu %f\n", ended - started, t.ElapsedSecond());
+	//printf("%f\n", g_time_fill * 100.0 / (ended - started));
 	
 	return 0;
 }
