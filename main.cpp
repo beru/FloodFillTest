@@ -176,7 +176,7 @@ int bsf(unsigned int mask)
 
 int tzcnt(uint32_t mask)
 {
-#if 0
+#if 1
 	return _tzcnt_u32(mask);	// BMI1
 #else
 	return bsf(mask);
@@ -197,7 +197,8 @@ void FloodFill_ScanLine2(
 	const Range& limitRange,
 	Range& filledRange,
 	CheckFunc check,
-	__m128i threshold
+	__m128i threshold,
+	__m256i threshold2
 	)
 {
 	uint32_t px = pt.x;
@@ -299,8 +300,6 @@ void FloodFill_ScanLine2(
 
 		// ˜A‘±‚·‚é—LŒø”ÍˆÍ‚ğ’²¸
 	Label_FindRX:
-//unsigned int id;
-//auto started = __rdtscp(&id);
 #if 0
 		for (; rx<=limitRange.maxX; ++rx) {
 			if (!check(pImageLine[rx])) {
@@ -312,17 +311,39 @@ void FloodFill_ScanLine2(
 		{
 			int len = (limitRange.maxX - rx) + 1;
 			if (len) {
-				int len16 = len >> 4;
-				len = len & 15;
+#if 1
 				{
+					__m256i dat32 = _mm256_lddqu_si256((const __m256i*)(pImageLine + rx));
+					dat32 = _mm256_cmpeq_epi8(dat32, _mm256_max_epu8(dat32, threshold2));
+					int mask = _mm256_movemask_epi8(dat32);
+					int tzc = tzcnt(~mask);
+					rx += min(len & 31, tzc);
+				}
+				const __m256i* pSrc = (const __m256i*)(pImageLine + rx);
+				int len32x = len >> 5;
+				for (int i=0; i<len32x; ++i) {
+					__m256i dat32 = _mm256_lddqu_si256(pSrc++);
+					dat32 = _mm256_cmpeq_epi8(dat32, _mm256_max_epu8(dat32, threshold2));
+					int mask = _mm256_movemask_epi8(dat32);
+					if (mask != -1) {
+						int tzc = tzcnt(~mask);
+						rx += i * 32 + tzc;
+						goto Label_EndRepeatSearch;
+					}
+				}
+				rx += len32x << 5;
+#else
+				{
+					// _mm_lddqu_si128
 					__m128i dat16 = _mm_loadu_si128((const __m128i*)(pImageLine + rx));
 					dat16 = _mm_cmpeq_epi8(dat16, _mm_max_epu8(dat16, threshold));
 					int mask = _mm_movemask_epi8(dat16);
 					int tzc = tzcnt(~mask);
-					rx += min(len, tzc);
+					rx += min(len & 15, tzc);
 				}
 				const __m128i* pSrc = (const __m128i*)(pImageLine + rx);
-				for (int i=0; i<len16; ++i) {
+				int len16x = len >> 4;
+				for (int i=0; i<len16x; ++i) {
 					__m128i dat16 = _mm_loadu_si128(pSrc++);
 					dat16 = _mm_cmpeq_epi8(dat16, _mm_max_epu8(dat16, threshold));
 					int mask = _mm_movemask_epi8(dat16);
@@ -332,14 +353,13 @@ void FloodFill_ScanLine2(
 						goto Label_EndRepeatSearch;
 					}
 				}
-				rx += 16 * len16;
+				rx += len16x << 4;
+#endif
 			}
 		Label_EndRepeatSearch:
 			;
 		}
 #endif
-//auto ended = __rdtscp(&id);
-//g_time_fill += ended - started;
 		--rx;
 //		printf("rx %d\n", rx);
 
@@ -421,7 +441,8 @@ int main(int argc, char* argv[])
 				limitRange,
 				filledRange,
 				[=](uint8_t val) -> bool { return val >= i; },
-				_mm_set1_epi8(i)
+				_mm_set1_epi8(i),
+				_mm256_set1_epi8(i)
 			);
 			//printf("%d\n", i);
 		}
