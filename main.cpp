@@ -300,6 +300,8 @@ void FloodFill_ScanLine2(
 
 		// ˜A‘±‚·‚é—LŒø”ÍˆÍ‚ğ’²¸
 	Label_FindRX:
+//unsigned int id;
+//auto started = __rdtscp(&id);
 #if 0
 		for (; rx<=limitRange.maxX; ++rx) {
 			if (!check(pImageLine[rx])) {
@@ -360,6 +362,8 @@ void FloodFill_ScanLine2(
 			;
 		}
 #endif
+//auto ended = __rdtscp(&id);
+//g_time_fill += ended - started;
 		--rx;
 //		printf("rx %d\n", rx);
 
