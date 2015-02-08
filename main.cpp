@@ -5,6 +5,9 @@
 #include <assert.h>
 #include <vector>
 #include "timer.h"
+#include <intrin.h>
+
+#pragma intrinsic(_BitScanForward)
 
 unsigned long long g_time_fill;
 
@@ -147,6 +150,39 @@ void FloodFill_ScanLine(
 	}while (pos--);
 }
 
+// http://d.hatena.ne.jp/yaneurao/20090103
+// BSF(BitScanForward)
+//  1になっているbitを下位からscanして何bit目で見つかったかを返す。
+//  引数に0を渡してはいけない。
+int bsf(unsigned int mask)
+{
+    assert(mask);
+#ifdef _MSC_VER
+    // VC++の場合
+    unsigned long index;
+    _BitScanForward(&index, mask);
+    // これ引数が0だとサーチ失敗を意味するのだが…。
+    // まあ、そういう使い方はしてはならないということで…。
+    return (int)index;
+#elif defined (__x86_64 || i386)
+    int ret;
+    __asm__("bsfl %1,%0" : "=r"(ret) : "r"(mask));
+    return ret;
+#else
+    // gccの場合
+    return __builtin_ctzl(mask);
+#endif
+}
+
+int tzcnt(uint32_t mask)
+{
+#if 0
+	return _tzcnt_u32(mask);	// BMI1
+#else
+	return bsf(mask);
+#endif
+}
+
 //struct Record {
 //	int16_t py;		// parent y, sign bit indicates current line direction
 //	uint16_t cl;	// current left
@@ -272,10 +308,12 @@ void FloodFill_ScanLine2(
 			}
 		}
 #else
+		// TODO: SIMD版も関数object等で
 		{
 			int len = (limitRange.maxX - rx) + 1;
 			int len16 = len >> 4;
 			len = len & 15;
+			// TODO: ここもSIMDで
 			for (int i=0; i<len; ++i) {
 				if (!check(pImageLine[rx])) {
 					goto Label_EndRepeatSearch;
@@ -288,8 +326,7 @@ void FloodFill_ScanLine2(
 				dat16 = _mm_cmpeq_epi8(dat16, _mm_max_epu8(dat16, threshold));
 				int mask = _mm_movemask_epi8(dat16);
 				if (mask != 65535) {
-					int lzc = _lzcnt_u32(~mask);
-					int tzc = _tzcnt_u32(~mask);
+					int tzc = tzcnt(~mask);
 					rx += i * 16 + tzc;
 					goto Label_EndRepeatSearch;
 				}
@@ -299,16 +336,6 @@ void FloodFill_ScanLine2(
 			;
 		}
 #endif
-		//__m128i 
-		//_mm_loadu_si128
-		//_mm_sub_epi8
-		//_mm_cmpgt_epi8 (__m128i a, __m128i b)
-		//_mm_movemask_epi8
-		//_tzcnt_u32
-		//POPCNT
-		//_BitScanForward
-		//https://geidav.wordpress.com/2014/03/06/on-finding-1-bit-sequences/
-		//_tzcnt_u32();
 //auto ended = __rdtscp(&id);
 //g_time_fill += ended - started;
 		--rx;
