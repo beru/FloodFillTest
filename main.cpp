@@ -311,27 +311,29 @@ void FloodFill_ScanLine2(
 		// TODO: SIMDî≈Ç‡ä÷êîobjectìôÇ≈
 		{
 			int len = (limitRange.maxX - rx) + 1;
-			int len16 = len >> 4;
-			len = len & 15;
-			// TODO: Ç±Ç±Ç‡SIMDÇ≈
-			for (int i=0; i<len; ++i) {
-				if (!check(pImageLine[rx])) {
-					goto Label_EndRepeatSearch;
-				}
-				++rx;
-			}
-			const __m128i* pSrc = (const __m128i*)(pImageLine + rx);
-			for (int i=0; i<len16; ++i) {
-				__m128i dat16 = _mm_loadu_si128(pSrc++);
-				dat16 = _mm_cmpeq_epi8(dat16, _mm_max_epu8(dat16, threshold));
-				int mask = _mm_movemask_epi8(dat16);
-				if (mask != 65535) {
+			if (len) {
+				int len16 = len >> 4;
+				len = len & 15;
+				{
+					__m128i dat16 = _mm_loadu_si128((const __m128i*)(pImageLine + rx));
+					dat16 = _mm_cmpeq_epi8(dat16, _mm_max_epu8(dat16, threshold));
+					int mask = _mm_movemask_epi8(dat16);
 					int tzc = tzcnt(~mask);
-					rx += i * 16 + tzc;
-					goto Label_EndRepeatSearch;
+					rx += min(len, tzc);
 				}
+				const __m128i* pSrc = (const __m128i*)(pImageLine + rx);
+				for (int i=0; i<len16; ++i) {
+					__m128i dat16 = _mm_loadu_si128(pSrc++);
+					dat16 = _mm_cmpeq_epi8(dat16, _mm_max_epu8(dat16, threshold));
+					int mask = _mm_movemask_epi8(dat16);
+					if (mask != 65535) {
+						int tzc = tzcnt(~mask);
+						rx += i * 16 + tzc;
+						goto Label_EndRepeatSearch;
+					}
+				}
+				rx += 16 * len16;
 			}
-			rx += 16 * len16;
 		Label_EndRepeatSearch:
 			;
 		}
