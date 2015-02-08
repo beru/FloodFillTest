@@ -160,7 +160,8 @@ void FloodFill_ScanLine2(
 	Point pt,
 	const Range& limitRange,
 	Range& filledRange,
-	CheckFunc check
+	CheckFunc check,
+	__m128i threshold
 	)
 {
 	uint32_t px = pt.x;
@@ -206,10 +207,9 @@ void FloodFill_ScanLine2(
 	const uint16_t maxMinRange = limitRange.maxY - limitRange.minY;
 	do {
 		py = *--pStackTop;
-		int dir = (py < 0) ? -1 : +1;
-		int cy0 = py + 1;
-		int cy = abs(cy0);
-		assert(cy0 == cy*dir);
+		//int dir = (py < 0) ? -1 : +1;
+		int dir = +1 | (py >> (sizeof(py) * 8 - 1));
+		int cy = abs(py + 1);
 		assert(cy == abs(py + 1));
 		pFlagsLine = &pFlags[cy * flagsLineStride];
 		pImageLine = &pImage[cy * imageLineStride];
@@ -218,12 +218,8 @@ void FloodFill_ScanLine2(
 		assert(cl >= 0);
 		assert(cr >= 0);
 	Label_Do:
-//unsigned int id;
-//auto started = __rdtscp(&id);
 		//bool isGyAvailable = (dir > 0) ? (cy <= limitRange.maxY) : (cy >= limitRange.minY);
 		bool isGyAvailable = (unsigned)(cy - limitRange.minY) <= maxMinRange;
-//auto ended = __rdtscp(&id);
-//g_time_fill += ended - started;
 		// 領域外だったり既に記録済みなら終了
 		if (!isGyAvailable || pFlagsLine[cl]) {
 			continue;
@@ -243,7 +239,7 @@ void FloodFill_ScanLine2(
 				// 親行の左側を調査
 				*pStackTop++ = cl - 2;
 				*pStackTop++ = lx;
-				*pStackTop++ = -cy0;
+				*pStackTop++ = -(py + 1);
 			}
 			rx = lx + 1;
 		}else {
@@ -267,32 +263,56 @@ void FloodFill_ScanLine2(
 
 		// 連続する有効範囲を調査
 	Label_FindRX:
-#if 1
-		for (; rx<cr; ++rx) {
-			if (!check(pImageLine[rx])) {
-				break;
-			}
-		}
-#else
-		__m128i 
-		_mm_loadu_si128
-		_mm_sub_epi8
-		_mm_cmpgt_epi8 (__m128i a, __m128i b)
-		_mm_movemask_epi8
-		_tzcnt_u32
-		POPCNT
-		_BitScanForward
-		https://geidav.wordpress.com/2014/03/06/on-finding-1-bit-sequences/
-	
-		_tzcnt_u32();
-#endif
-	Label_FindRX2:
+//unsigned int id;
+//auto started = __rdtscp(&id);
+#if 0
 		for (; rx<=limitRange.maxX; ++rx) {
 			if (!check(pImageLine[rx])) {
 				break;
 			}
 		}
+#else
+		{
+			int len = (limitRange.maxX - rx) + 1;
+			int len16 = len >> 4;
+			len = len & 15;
+			for (int i=0; i<len; ++i) {
+				if (!check(pImageLine[rx])) {
+					goto Label_EndRepeatSearch;
+				}
+				++rx;
+			}
+			const __m128i* pSrc = (const __m128i*)(pImageLine + rx);
+			for (int i=0; i<len16; ++i) {
+				__m128i dat16 = _mm_loadu_si128(pSrc++);
+				dat16 = _mm_cmpeq_epi8(dat16, _mm_max_epu8(dat16, threshold));
+				int mask = _mm_movemask_epi8(dat16);
+				if (mask != 65535) {
+					int lzc = _lzcnt_u32(~mask);
+					int tzc = _tzcnt_u32(~mask);
+					rx += i * 16 + tzc;
+					goto Label_EndRepeatSearch;
+				}
+			}
+			rx += 16 * len16;
+		Label_EndRepeatSearch:
+			;
+		}
+#endif
+		//__m128i 
+		//_mm_loadu_si128
+		//_mm_sub_epi8
+		//_mm_cmpgt_epi8 (__m128i a, __m128i b)
+		//_mm_movemask_epi8
+		//_tzcnt_u32
+		//POPCNT
+		//_BitScanForward
+		//https://geidav.wordpress.com/2014/03/06/on-finding-1-bit-sequences/
+		//_tzcnt_u32();
+//auto ended = __rdtscp(&id);
+//g_time_fill += ended - started;
 		--rx;
+//		printf("rx %d\n", rx);
 
 		// 有効範囲の記録
 		for (int x=lx; x<=rx; ++x) {
@@ -303,18 +323,18 @@ void FloodFill_ScanLine2(
 				// 調査範囲の右端より２つ以上先で終わっていた場合は親行の右側を調査する
 				*pStackTop++ = rx;
 				*pStackTop++ = cr + 2;
-				*pStackTop++ = -cy0;
+				*pStackTop++ = -(py + 1);
 			}
 		}else {
 			// 調査範囲の右端より２つ以上手前で終わっていた場合は
 			// まだ右端まで到達していないので２つ先から調査継続
 			int lx2 = rx + 2;
-			for (; lx2<cr; ++lx2) {
+			for (; lx2<=cr; ++lx2) {
 				if (check(pImageLine[lx2])) {
 					// 親行と反対側の行を調査する
 					*pStackTop++ = rx;
 					*pStackTop++ = lx;
-					*pStackTop++ = cy0;
+					*pStackTop++ = (py + 1);
 
 					// その先に左端が見つかったら、連続する有効範囲を調査
 					lx = lx2;
@@ -322,28 +342,16 @@ void FloodFill_ScanLine2(
 					goto Label_FindRX;
 				}
 			}
-			if (check(pImageLine[lx2])) {
-				// 親行と反対側の行を調査する
-				*pStackTop++ = rx;
-				*pStackTop++ = lx;
-				*pStackTop++ = cy0;
-
-				// その先に左端が見つかったら、連続する有効範囲を調査
-				lx = lx2;
-				rx = lx2 + 1;
-				goto Label_FindRX2;
-			}
 		}
 		// 親行と反対側の行を調査する
-		py = cy0;
-		cy0 += 1;
-		cy = abs(cy0);
+		++py;
+		cy += dir;
 		pFlagsLine += dir * flagsLineStride;
 		pImageLine += dir * imageLineStride;
 		cl = lx;
 		cr = rx;
 		goto Label_Do;
-
+		
 	} while (pStackTop > stack);
 }
 
@@ -383,7 +391,8 @@ int main(int argc, char* argv[])
 				{WIDTH/2, HEIGHT/2},
 				limitRange,
 				filledRange,
-				[=](uint8_t val) -> bool { return val >= i; }
+				[=](uint8_t val) -> bool { return val >= i; },
+				_mm_set1_epi8(i)
 			);
 			//printf("%d\n", i);
 		}
@@ -391,7 +400,7 @@ int main(int argc, char* argv[])
 	unsigned long long ended = __rdtscp(&id);
 
 	printf("%llu %f\n", ended - started, t.ElapsedSecond());
-	//printf("%f\n", g_time_fill * 100.0 / (ended - started));
+	printf("%f\n", g_time_fill * 100.0 / (ended - started));
 	
 	return 0;
 }
