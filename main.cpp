@@ -183,6 +183,72 @@ int tzcnt(uint32_t mask)
 #endif
 }
 
+static inline
+__m128i m128i_shift_left(__m128i a, int count)
+{
+	int count32x = count >> 5;
+	__m128i b;
+	switch (count32x) {
+	case 0:
+		b = a;
+		break;
+	case 1:
+		b = _mm_slli_si128(a, 4);
+		break;
+	case 2:
+		b = _mm_slli_si128(a, 4*2);
+		break;
+	case 3:
+		b = _mm_slli_si128(a, 4*3);
+		break;
+	default:
+		__assume(0);
+	}
+	int count31 = count & 31;
+	if (count31) {
+		__m128i b2 = _mm_slli_si128(b, 4);
+		__m128i vecCount0 = _mm_cvtsi32_si128(count31);
+		__m128i vecCount1 = _mm_cvtsi32_si128(32 - count31);
+		__m128i b0 = _mm_sll_epi32(b, vecCount0);
+		__m128i b1 = _mm_srl_epi32(b2, vecCount1);
+		b = _mm_or_si128(b0, b1);
+	}
+	return b;
+}
+
+static inline
+__m128i m128i_shift_right(__m128i a, int count)
+{
+	int count32x = count >> 5;
+	__m128i b;
+	switch (count32x) {
+	case 0:
+		b = a;
+		break;
+	case 1:
+		b = _mm_srli_si128(a, 4);
+		break;
+	case 2:
+		b = _mm_srli_si128(a, 4*2);
+		break;
+	case 3:
+		b = _mm_srli_si128(a, 4*3);
+		break;
+	default:
+		__assume(0);
+	}
+	int count31 = count & 31;
+	if (count31) {
+		__m128i b2 = _mm_srli_si128(b, 4);
+		__m128i vecCount0 = _mm_cvtsi32_si128(count31);
+		__m128i vecCount1 = _mm_cvtsi32_si128(32 - count31);
+		__m128i b0 = _mm_srl_epi32(b, vecCount0);
+		__m128i b1 = _mm_sll_epi32(b2, vecCount1);
+		b = _mm_or_si128(b0, b1);
+	}
+	return b;
+}
+
 //struct Record {
 //	int16_t py;		// parent y, sign bit indicates current line direction
 //	uint16_t cl;	// current left
@@ -230,9 +296,12 @@ void FloodFill_ScanLine2(
 		--pr;
 
 		// fill middle
-		for (int x=pl; x<=pr; ++x) {
-			pFlagsLine[x] = 1;
-		}
+		int len = pr - pl + 1;
+		__stosb(pFlagsLine+pl, 1, len);	// rep stosb
+		//memset(pFlagsLine+pl, 1, len);
+		//for (int x=pl; x<=pr; ++x) {
+		//	pFlagsLine[x] = 1;
+		//}
 
 		*pStackTop++ = pr;
 		*pStackTop++ = pl;
@@ -303,17 +372,25 @@ void FloodFill_ScanLine2(
 //unsigned int id;
 //auto started = __rdtscp(&id);
 #if 0
+		// scalar
 		for (; rx<=limitRange.maxX; ++rx) {
 			if (!check(pImageLine[rx])) {
 				break;
 			}
 		}
+		--rx;
+		// 有効範囲の記録
+		memset(pFlagsLine+lx, 1, rx-lx+1);
+		//for (int x=lx; x<=rx; ++x) {
+		//	pFlagsLine[x] = 1;
+		//}
 #else
 		// TODO: SIMD版も関数object等で
 		{
 			int len = (limitRange.maxX - rx) + 1;
 			if (len) {
 #if 1
+				// AVX2
 				{
 					__m256i dat32 = _mm256_lddqu_si256((const __m256i*)(pImageLine + rx));
 					dat32 = _mm256_cmpeq_epi8(dat32, _mm256_max_epu8(dat32, threshold2));
@@ -335,6 +412,7 @@ void FloodFill_ScanLine2(
 				}
 				rx += len32x << 5;
 #else
+				// SSE2
 				{
 					// _mm_lddqu_si128
 					__m128i dat16 = _mm_loadu_si128((const __m128i*)(pImageLine + rx));
@@ -360,17 +438,61 @@ void FloodFill_ScanLine2(
 			}
 		Label_EndRepeatSearch:
 			;
+			--rx;
+			// 有効範囲の記録
+			len = (rx - lx) + 1;
+#if 0
+			// AVX2
+			int len31 = len & 31;
+#if 1
+			// faster
+			for (int i=0; i<len31; ++i) {
+				pFlagsLine[lx + i] = 1;
+			}
+#else
+			// slower
+			__m128i dat1 = _mm_set1_epi8(1);
+			int len15 = len & 15;
+			if (len15) {
+				__m128i mask = _mm_set1_epi8(-1);
+				mask = m128i_shift_right(mask, 8 * (16 - len15));
+				_mm_maskmoveu_si128(dat1, mask, (char*)(pFlagsLine + lx));
+			}
+			if (len31 >= 16) {
+				_mm_storeu_si128((__m128i*)(pFlagsLine + lx + len15), dat1);
+			}
+#endif
+			int len32x = len >> 5;
+			if (len32x) {
+				__m256i dat = _mm256_set1_epi8(1);
+				__m256i* pDst = (__m256i*)(pFlagsLine + lx + len31);
+				for (int i=0; i<len32x; ++i) {
+					_mm256_storeu_si256(pDst+i, dat);
+				}
+			}
+#elif 0
+			// SSE2
+			int len15 = len & 15;
+			for (int i=0; i<len15; ++i) {
+				pFlagsLine[lx + i] = 1;
+			}
+			int len16x = len >> 4;
+			if (len16x) {
+				__m128i dat = _mm_set1_epi8(1);
+				__m128i* pDst = (__m128i*)(pFlagsLine + lx + len15);
+				for (int i=0; i<len16x; ++i) {
+					_mm_storeu_si128(pDst+i, dat);
+				}
+			}
+#else
+			__stosb(pFlagsLine+lx, 1, len);	// rep stosb
+//			memset(pFlagsLine+lx, 1, len);
+#endif
+
 		}
 #endif
 //auto ended = __rdtscp(&id);
 //g_time_fill += ended - started;
-		--rx;
-//		printf("rx %d\n", rx);
-
-		// 有効範囲の記録
-		for (int x=lx; x<=rx; ++x) {
-			pFlagsLine[x] = 1;
-		}
 		if (cr - rx < 2) {
 			if (rx - cr >= 2) {
 				// 調査範囲の右端より２つ以上先で終わっていた場合は親行の右側を調査する
